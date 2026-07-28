@@ -10,3 +10,9 @@ class Finance(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+    class JenisSOA(models.TextChoices):
+        KLAIM = 'KLAIM', 'Klaim'
+        PREMI = 'PREMI', 'Premi'
+
+    jenis_soa = models.CharField(max_length=10, choises=JenisSOA)

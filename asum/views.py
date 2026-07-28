@@ -41,12 +41,12 @@ def process_and_export_asum(request):
                 excel_bytes,
                 content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
-            response['Content-Disposition'] = f'attachment; filename="asum_allocation_{jenis_soa.lower()}_result.xlsx"'
+            response['Content-Disposition'] = f'attachment; filename="asum_spreading_{jenis_soa.lower()}_result.xlsx"'
             return response
 
         elif export_format == 'csv':
             response = HttpResponse(content_type='text/csv')
-            response['Content-Disposition'] = f'attachment; filename="asum_allocation_{jenis_soa.lower()}_result.csv"'
+            response['Content-Disposition'] = f'attachment; filename="asum_spreading_{jenis_soa.lower()}_result.csv"'
             result_df.to_csv(path_or_buf=response, index=False)
             return response
 
