@@ -1,15 +1,18 @@
+import io
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.core.exceptions import ValidationError
 import json
+import pandas as pd
 
 from finance.models import Finance
 from services.finance_services import FinanceServices
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def process_and_export_asum(request):
+def process_and_export_finance(request):
+    # 1. Validate required files
     if 'main_file' not in request.FILES or 'reference_file' not in request.FILES:
         return JsonResponse({
             'error': 'Both "main_file" and "reference_file" must be uploaded.'
@@ -18,15 +21,29 @@ def process_and_export_asum(request):
     main_file = request.FILES['main_file']
     reference_file = request.FILES['reference_file']
 
-    jenis_soa = request.POST.get('jenis_soa', request.GET.get('jenis_soa', Finance.JenisSOA.KLAIM)).upper()
-    export_format = request.GET.get('export_format', 'excel').lower()
+    # 2. Extract parameters (checking POST data first, then GET query params)
+    raw_jenis_soa = (
+        request.POST.get('jenis_soa') or 
+        request.GET.get('jenis_soa') or 
+        getattr(Finance.JenisSOA, 'KLAIM', 'KLAIM')
+    )
+    jenis_soa = str(raw_jenis_soa).strip().upper()
+
+    export_format = request.GET.get('export_format', request.POST.get('export_format', 'excel')).lower()
 
     try:
-        if jenis_soa == Finance.JenisSOA.PREMI:
+        # 3. Route processing based on SOA type
+        if jenis_soa == getattr(Finance.JenisSOA, 'PREMI', 'PREMI'):
             result_df = FinanceServices.process_finance_allocation_premi(main_file, reference_file)
         else:
             result_df = FinanceServices.process_finance_allocation_claim(main_file, reference_file)
 
+        # 4. Handle potential missing output columns safely (e.g. DOL in Premi)
+        for col in result_df.columns:
+            if result_df[col].isna().all():
+                result_df[col] = ""
+
+        # 5. Log processing record to the database
         Finance.objects.create(
             main_filename=main_file.name,
             reference_filename=reference_file.name,
@@ -34,18 +51,26 @@ def process_and_export_asum(request):
             jenis_soa=jenis_soa
         )
 
+        # 6. Format and export output
+        filename_prefix = f"finance_spreading_{jenis_soa.lower()}_result"
+
         if export_format == 'excel':
-            excel_bytes = FinanceServices.export_to_excel(result_df)
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                result_df.to_excel(writer, index=False, sheet_name='FINANCE Spreading')
+            
+            excel_bytes = output.getvalue()
+
             response = HttpResponse(
                 excel_bytes,
                 content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
-            response['Content-Disposition'] = f'attachment; filename="finance_spreading_{jenis_soa.lower()}_result.xlsx"'
+            response['Content-Disposition'] = f'attachment; filename="{filename_prefix}.xlsx"'
             return response
 
         elif export_format == 'csv':
             response = HttpResponse(content_type='text/csv')
-            response['Content-Disposition'] = f'attachment; filename="finance_spreadin_{jenis_soa.lower()}_result.csv"'
+            response['Content-Disposition'] = f'attachment; filename="{filename_prefix}.csv"'
             result_df.to_csv(path_or_buf=response, index=False)
             return response
 
@@ -59,6 +84,6 @@ def process_and_export_asum(request):
             }, status=200)
 
     except ValidationError as e:
-        return JsonResponse({'error': str(e)}, status=400)
+        return JsonResponse({'error': e.message if hasattr(e, 'message') else str(e)}, status=400)
     except Exception as e:
         return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)

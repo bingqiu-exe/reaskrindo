@@ -15,4 +15,4 @@ class Finance(models.Model):
         KLAIM = 'KLAIM', 'Klaim'
         PREMI = 'PREMI', 'Premi'
 
-    jenis_soa = models.CharField(max_length=10, choises=JenisSOA)
+    jenis_soa = models.CharField(max_length=10, choices=JenisSOA)
