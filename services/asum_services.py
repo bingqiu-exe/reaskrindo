@@ -13,8 +13,30 @@ class AsumServices:
         "VOLANTE", "QBE", "TOKIO", "CHAUCER", "PVI", "HANNOVER"
     ]
 
-    REQUIRED_PREMI_KEYWORDS = ['policy', 'insured', 'cob', 'inception', 'expiry', 'currency', 'uy', 'tsi']
-    REQUIRED_KLAIM_KEYWORDS = ['policy', 'insured', 'cob', 'inception', 'expiry', 'currency', 'uy', 'claim']
+    # Flexible keyword sets (Grouped by column concept)
+    REQUIRED_KLAIM_GROUPS = [
+        ['policy', 'polis'],                       # Policy number
+        ['insured', 'debitur'],                    # Insured name
+        ['cob'],                                    # Class of business
+        ['inception', 'awal', 'start'],            # Start date
+        ['expiry', 'akhir', 'end'],                # End date
+        ['currency', 'curr', 'valuta'],             # Currency
+        ['uy', 'uw', 'underwriting'],              # Underwriting Year
+        ['claim', 'klaim'],                         # Claim amount
+        ['quota share'],
+        ['surplus']
+    ]
+
+    REQUIRED_PREMI_GROUPS = [
+        ['policy', 'polis'],
+        ['insured', 'debitur'],
+        ['cob'],
+        ['inception', 'awal', 'start'],
+        ['expiry', 'akhir', 'end'],
+        ['currency', 'curr', 'valuta'],
+        ['uy', 'uw', 'underwriting'],
+        ['tsi', 'premi']
+    ]
 
     @classmethod
     def _read_file(cls, uploaded_file, required_terms: list = None) -> pd.DataFrame:
@@ -22,28 +44,61 @@ class AsumServices:
         file_bytes = uploaded_file.read()
         uploaded_file.seek(0)
         
-        if filename.endswith('.csv'):
-            read_fn = lambda header_row: pd.read_csv(io.BytesIO(file_bytes), header=header_row)
-        elif filename.endswith(('.xls', '.xlsx')):
-            read_fn = lambda header_row: pd.read_excel(io.BytesIO(file_bytes), header=header_row)
-        else:
-            raise ValidationError("Unsupported file format. Please upload CSV or Excel (.xlsx).")
+        def read_fn(header_row):
+            if filename.endswith('.csv'):
+                # Encodings commonly used by Excel/Windows CSV exports containing special dashes (0x96)
+                encodings = ['utf-8-sig', 'cp1252', 'latin1', 'iso-8859-1']
+                for enc in encodings:
+                    try:
+                        return pd.read_csv(
+                            io.BytesIO(file_bytes), 
+                            header=header_row, 
+                            encoding=enc, 
+                            engine='python', 
+                            sep=None
+                        )
+                    except UnicodeDecodeError:
+                        continue
+                # Final fallback if all encodings fail
+                return pd.read_csv(io.BytesIO(file_bytes), header=header_row, encoding='latin1')
+                
+            elif filename.endswith(('.xls', '.xlsx')):
+                return pd.read_excel(io.BytesIO(file_bytes), header=header_row)
+            else:
+                raise ValidationError("Unsupported file format. Please upload CSV or Excel (.xlsx).")
 
         if not required_terms:
             return read_fn(0)
 
-        for header_idx in range(5):
+        failed_attempts = []
+        for header_idx in range(10):
             try:
                 df = read_fn(header_idx)
-                cols_str = " ".join([str(c).lower() for c in df.columns])
-                if all(term.lower() in cols_str for term in required_terms):
+                
+                # Clean and normalize column names
+                cols = [re.sub(r'\s+', ' ', str(c)).strip().lower().replace('_', ' ') for c in df.columns]
+                cols_str = " ".join(cols)
+                
+                # Group matching check: Each group in required_terms must have AT LEAST ONE matching keyword
+                missing_groups = []
+                for group in required_terms:
+                    # Handle both list groups e.g. ['policy', 'polis'] and plain string terms
+                    aliases = group if isinstance(group, list) else [group]
+                    if not any(alias.lower() in cols_str for alias in aliases):
+                        missing_groups.append("/".join(aliases))
+                
+                if not missing_groups:
                     return df
-            except Exception:
+                else:
+                    failed_attempts.append(f"Row {header_idx} missing: {missing_groups} | Cols found: {cols}")
+                    
+            except Exception as e:
+                failed_attempts.append(f"Row {header_idx} error: {str(e)}")
                 continue
 
+        debug_msg = " | ".join(failed_attempts[:3])
         raise ValidationError(
-            f"Failed to detect required header columns in the first 5 rows of '{uploaded_file.name}'. "
-            f"Required terms: {', '.join(required_terms)}"
+            f"Failed to detect required header columns in '{uploaded_file.name}'. Debug Info: {debug_msg}"
         )
 
     @classmethod
@@ -199,7 +254,7 @@ class AsumServices:
     # PREMI
     @classmethod
     def process_asum_allocation_premi(cls, main_file, reference_file) -> pd.DataFrame:
-        df_premi = cls._read_file(main_file, required_terms=cls.REQUIRED_PREMI_KEYWORDS)
+        df_premi = cls._read_file(main_file, required_terms=cls.REQUIRED_PREMI_GROUPS)
         df_treaty = cls._read_file(reference_file)
 
         no_polis = cls._get_column_value(df_premi, ['policy_no', 'policy number', 'policy_number', 'no_polis', 'nopolis']).astype(str).str.strip()
@@ -256,7 +311,7 @@ class AsumServices:
     # KLAIM
     @classmethod
     def process_asum_allocation_claim(cls, main_file, reference_file) -> pd.DataFrame:
-        df_claim = cls._read_file(main_file, required_terms=cls.REQUIRED_KLAIM_KEYWORDS)
+        df_claim = cls._read_file(main_file, required_terms=cls.REQUIRED_KLAIM_GROUPS)
         df_treaty = cls._read_file(reference_file)
 
         no_polis = cls._get_column_value(df_claim, ['policy_no', 'policy number', 'policy_number', 'no_polis', 'nopolis']).astype(str).str.strip()
