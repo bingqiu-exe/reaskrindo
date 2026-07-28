@@ -1,0 +1,12 @@
+import uuid
+from django.db import models
+
+class Finance(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    main_filename = models.CharField(max_length=255)
+    reference_filename = models.CharField(max_length=255)
+    total_rows_processed = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ['-created_at']

@@ -1,0 +1,14 @@
+django
+gunicorn
+whitenoise
+psycopg2-binary
+requests
+urllib3
+pandas
+openpyxl
+django-rest-framework
+django-cors-headers
+djoser
+python-dotenv
+reportlab
+faker
