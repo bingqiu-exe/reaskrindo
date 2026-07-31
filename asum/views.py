@@ -22,7 +22,7 @@ def process_and_export_asum(request):
     main_file = request.FILES['main_file']
     reference_file = request.FILES['reference_file']
 
-    # 2. Extract parameters (checking POST data first, then GET query params)
+    # 2. Extract parameters
     raw_jenis_soa = (
         request.POST.get('jenis_soa') or 
         request.GET.get('jenis_soa') or 
@@ -39,7 +39,7 @@ def process_and_export_asum(request):
         else:
             result_df = AsumServices.process_asum_allocation_claim(main_file, reference_file)
 
-        # 4. Handle potential missing output columns safely (e.g. DOL in Premi)
+        # 4. Handle potential missing output columns safely
         for col in result_df.columns:
             if result_df[col].isna().all():
                 result_df[col] = ""
@@ -56,14 +56,14 @@ def process_and_export_asum(request):
         filename_prefix = f"asum_spreading_{jenis_soa.lower()}_result"
 
         if export_format == 'excel':
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                result_df.to_excel(writer, index=False, sheet_name='ASUM Spreading')
-            
-            excel_bytes = output.getvalue()
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                result_df.to_excel(writer, index=False)
+
+            buffer.seek(0)
 
             response = HttpResponse(
-                excel_bytes,
+                buffer.getvalue(),
                 content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
             response['Content-Disposition'] = f'attachment; filename="{filename_prefix}.xlsx"'
@@ -76,15 +76,30 @@ def process_and_export_asum(request):
             return response
 
         else:
-            json_records = json.loads(result_df.to_json(orient='records', date_format='iso'))
+            # Limit response size for browser preview to avoid browser memory crash
+            PREVIEW_LIMIT = 500
+            total_records = len(result_df)
+            
+            # Slice dataframe for preview
+            preview_df = result_df.head(PREVIEW_LIMIT)
+            json_records = json.loads(preview_df.to_json(orient='records', date_format='iso'))
+            
             return JsonResponse({
-                'message': 'Data processed successfully.',
+                'message': f'Data processed successfully. Showing top {min(PREVIEW_LIMIT, total_records)} of {total_records} rows.',
                 'jenis_soa': jenis_soa,
-                'total_rows': len(result_df),
+                'total_rows': total_records,
                 'results': json_records
             }, status=200)
 
     except ValidationError as e:
-        return JsonResponse({'error': e.message if hasattr(e, 'message') else str(e)}, status=400)
+        error_msg = e.message if hasattr(e, 'message') else str(e)
+        print("\n--- VALIDATION ERROR DETECTED ---")
+        print(error_msg)
+        print("---------------------------------\n")
+        return JsonResponse({'error': error_msg}, status=400)
     except Exception as e:
+        import traceback
+        print("\n--- SERVER EXCEPTION ---")
+        traceback.print_exc()
+        print("------------------------\n")
         return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)

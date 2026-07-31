@@ -13,8 +13,31 @@ class FinanceServices:
         "VOLANTE", "QBE", "TOKIO", "CHAUCER", "PVI", "HANNOVER"
     ]
 
-    REQUIRED_PREMI_KEYWORDS = ['sertifikat', 'debitur', 'cob', 'inception', 'expiry', 'currency', 'uy', 'tsi']
-    REQUIRED_KLAIM_KEYWORDS = ['sertifikat', 'debitur', 'cob', 'inception', 'expiry', 'currency', 'uy', 'gros']
+    REQUIRED_KLAIM_GROUPS = [
+        ['certificate', 'sertifikat'],                       # Policy number
+        ['insured', 'debitur'],                    # Insured name
+        ['cob'],                                    # Class of business
+        ['awal', 'start'],            # Start date
+        ['akhir', 'end'],                # End date
+        ['currency', 'curr', 'valuta'],             # Currency
+        ['uy', 'uw', 'underwriting'],              # Underwriting Year
+        ['gross', 'gros'],                         # Claim amount
+        ['quota share', 'qs'],
+        ['surplus', 'sp', 'spl']
+    ]
+
+    REQUIRED_PREMI_GROUPS = [
+        ['policy', 'polis'],
+        ['insured', 'debitur'],
+        ['cob'],
+        ['inception', 'awal', 'start'],
+        ['expiry', 'akhir', 'end'],
+        ['currency', 'curr', 'valuta'],
+        ['uy', 'uw', 'underwriting'],
+        ['tsi'],
+        ['quota share', 'qs'],
+        ['surplus', 'sp', 'spl']
+    ]
 
     @classmethod
     def _read_file(cls, uploaded_file, required_terms: list = None) -> pd.DataFrame:

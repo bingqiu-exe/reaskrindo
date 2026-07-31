@@ -14,9 +14,7 @@ from services.kp_services import KPServices
 def process_and_export_kp(request):
     # 1. Validate required files
     if 'main_file' not in request.FILES or 'reference_file' not in request.FILES:
-        return JsonResponse({
-            'error': 'Both "main_file" and "reference_file" must be uploaded.'
-        }, status=400)
+        return JsonResponse({'error': 'Both "main_file" and "reference_file" must be uploaded.'}, status=400)
 
     main_file = request.FILES['main_file']
     reference_file = request.FILES['reference_file']
