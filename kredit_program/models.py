@@ -15,4 +15,4 @@ class KreditProgram(models.Model):
         KLAIM = 'KLAIM', 'Klaim'
         PREMI = 'PREMI', 'Premi'
 
-    jenis_soa = models.CharField(max_length=10, choices=JenisSOA)
+    jenis_soa = models.CharField(max_length=10, choices=JenisSOA.choices, default=JenisSOA.KLAIM)

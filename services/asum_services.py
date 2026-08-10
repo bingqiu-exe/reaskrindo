@@ -16,7 +16,7 @@ class AsumServices:
     COLUMN_MAPPING_KLAIM = {
         'POLICYREF_NO': ['policyref no', 'policyref_no', 'policy_refno', 'policy_ref_no', 'ref_no', 'no_ref', 'policy ref no', 'no. reg', 'no. registrasi', 'no_reg', 'reg_no', 'reg no.', 'nomor registrasi', 'nomor_registrasi'],
         'POLICY_NO': ['policy_no', 'policy_number', 'policy number', 'policy', 'polis', 'nopolis', 'claimno'],
-        'INSURED_NAME': ['insured_name', 'nama tertanggung', 'the insured', 'insured', 'nama_debitur', 'debitur'],
+        'INSURED_NAME': ['insured_name', 'insured name', 'nama tertanggung', 'the insured', 'insured', 'nama_debitur', 'debitur', 'tertanggung', 'nama_insured', 'nama insured'],
         'COB_TREATY': ['cob_treaty', 'cob eng', 'cob', 'cob_group', 'class_of_business', 'kode', 'product_name'],
         'INCEPTION': ['inception', 'tgl_awal', 'tanggal_awal', 'start_date', 'period of ins. awal'],
         'EXPIRY': ['expiry', 'tgl_akhir', 'tanggal_akhir', 'end_date', 'period of ins. akhir'],
@@ -28,25 +28,32 @@ class AsumServices:
         'SURPLUS': ['surplus', 'surplus_set', 'sp', 'spl', 'reas_sp', 'pct_sp', 'sor_sp', 'sp share', 'sp_share']
     }
 
-    # FIX 1: Define specific core required groups for Claim validation (don't require all 11 columns)
+    COLUMN_MAPPING_PREMI = {
+        'CERTIFICATE_NO': ['certificate no', 'certificate_no', 'certificate no.', 'no. certificate', 'no_certificate', 'no certificate', 'no_sertifikat', 'sertifikat_no', 'no. sertifikat', 'sertifikat no', 'no sertifikat'],
+        'POLICY_NO': ['policy_no', 'policy_number', 'policy number', 'policy', 'polis', 'nopolis'],
+        'INSURED_NAME': ['insured_name', 'insured name', 'nama tertanggung', 'the insured', 'insured', 'nama_debitur', 'debitur', 'tertanggung', 'nama_insured', 'nama insured'],
+        'COB_TREATY': ['cob_treaty', 'cob eng', 'cob', 'cob_group', 'class_of_business', 'kode', 'product_name'],
+        'INCEPTION': ['inception', 'tgl_awal', 'tanggal_awal', 'start_date', 'period of ins. awal'],
+        'EXPIRY': ['expiry', 'tgl_akhir', 'tanggal_akhir', 'end_date', 'period of ins. akhir'],
+        'CURRENCY': ['currency', 'curr', 'valuta'],
+        'UY_FINAL': ['uy_final', 'uy', 'uw_year', 'uw year', 'uw', 'underwriting_year', 'ay', 'py'],
+        'QUOTA_SHARE': ['quota_share', 'quota share', 'quota_share_set', 'qs', 'reas_qs', 'pct_qs', 'sor_qs', 'qs share', 'qs_share'],
+        'SURPLUS': ['surplus', 'surplus_set', 'sp', 'spl', 'reas_sp', 'pct_sp', 'sor_sp', 'sp share', 'sp_share']
+    }
+
     REQUIRED_KLAIM_GROUPS = [
         ['policy', 'polis', 'nopolis', 'claimno'],
         ['insured', 'debitur', 'tertanggung'],
         ['cob', 'kode', 'product'],
+        ['uy', 'uw', 'underwriting'],
         ['claim_amount', 'gross', 'amt', 'outstanding']
     ]
 
     REQUIRED_PREMI_GROUPS = [
         ['policy', 'polis'],
-        ['insured', 'debitur'],
+        ['insured', 'debitur', 'tertanggung'],
         ['cob', 'kode'],
-        ['inception', 'awal', 'start', 'tgl_awal'],
-        ['expiry', 'akhir', 'end', 'tgl_akhir'],
-        ['currency', 'curr', 'valuta'],
         ['uy', 'uw', 'underwriting'],
-        ['tsi', 'claim_amount', 'claim amount'],
-        ['quota share', 'qs'],
-        ['surplus', 'sp', 'spl']
     ]
 
     @classmethod
@@ -82,10 +89,8 @@ class AsumServices:
             else:
                 raise ValidationError("Unsupported file format. Please upload CSV or Excel (.xlsx).")
 
-        # Search depth: Scan up to 25 rows to accommodate title headers
         MAX_HEADER_SCAN = 25
 
-        # If no required terms provided (e.g., reference file), scan for the first non-empty header row
         if not required_terms:
             for idx in range(MAX_HEADER_SCAN):
                 try:
@@ -97,7 +102,6 @@ class AsumServices:
                     continue
             return read_fn(0)
 
-        # Required terms loop logic with flexible substring matching
         failed_attempts = []
         for header_idx in range(MAX_HEADER_SCAN):
             try:
@@ -109,7 +113,6 @@ class AsumServices:
                     aliases = group if isinstance(group, list) else [group]
                     clean_aliases = [re.sub(r'[\s_\-/]+', '', a).strip().lower() for a in aliases]
                     
-                    # FIX 2: Check if alias exists as a substring or exact match in any cleaned column header
                     match_found = any(
                         alias in col or col in alias 
                         for col in cols_clean 
@@ -138,13 +141,13 @@ class AsumServices:
     def _get_column_value(cls, df: pd.DataFrame, possible_names: list, default="") -> pd.Series:
         normalized_cols = {re.sub(r'[\s_\-/]+', '', str(col)).strip().lower(): col for col in df.columns}
         
-        # 1. Exact match pass
+        # Exact match pass
         for alias in possible_names:
             alias_clean = re.sub(r'[\s_\-/]+', '', alias).strip().lower()
             if alias_clean in normalized_cols:
                 return df[normalized_cols[alias_clean]]
 
-        # 2. Bi-directional substring pass (checks if alias in col OR col in alias)
+        # Substring pass
         for alias in possible_names:
             alias_clean = re.sub(r'[\s_\-/]+', '', alias).strip().lower()
             if not alias_clean:
@@ -165,7 +168,7 @@ class AsumServices:
         def clean_val(val):
             if pd.isna(val) or val is None:
                 return default
-            val_str = str(val).strip().replace('%', '') # Strip % signs
+            val_str = str(val).strip().replace('%', '')
             if val_str in ['', 'nan', 'None', 'null', '-']:
                 return default
 
@@ -174,7 +177,6 @@ class AsumServices:
             except ValueError:
                 pass
 
-            # Handle European format: 1.000,50 -> 1000.50
             cleaned = val_str.replace('.', '').replace(',', '.')
             try:
                 return float(cleaned)
@@ -182,6 +184,11 @@ class AsumServices:
                 return default
 
         return s.apply(clean_val).astype(float)
+
+    @classmethod
+    def _normalize_share_decimal(cls, series: pd.Series) -> pd.Series:
+        """Ensure shares are converted to standard decimal values (0.0 to 1.0 range)."""
+        return series.apply(lambda v: v / 100.0 if v > 1.0 else v).round(6)
 
     @classmethod
     def _normalize_key_string(cls, series: pd.Series) -> pd.Series:
@@ -240,8 +247,17 @@ class AsumServices:
         
         komisi_qs = cls._get_numeric_column(df_treaty, ['komisi_qs_per_panel', 'komisi_qs'])
         komisi_sp = cls._get_numeric_column(df_treaty, ['komisi_sp_per_panel', 'komisi_sp'])
-        share_qs_panel = cls._get_numeric_column(df_treaty, ['share_qs_panel_of_share_reas', 'share_qs_per_panel_of_100_pct', 'share_qs', 'broker_qs_share'])
-        share_sp_panel = cls._get_numeric_column(df_treaty, ['share_sp_panel_of_share_reas', 'broker_sp_share', 'share_sp'])
+        
+        # Normalize commission percents to standard decimals if entered > 1.0
+        komisi_qs = cls._normalize_share_decimal(komisi_qs)
+        komisi_sp = cls._normalize_share_decimal(komisi_sp)
+
+        share_qs_panel = cls._normalize_share_decimal(
+            cls._get_numeric_column(df_treaty, ['share_qs_panel_of_share_reas', 'share_qs_per_panel_of_100_pct', 'share_qs', 'broker_qs_share'])
+        )
+        share_sp_panel = cls._normalize_share_decimal(
+            cls._get_numeric_column(df_treaty, ['share_sp_panel_of_share_reas', 'broker_sp_share', 'share_sp'])
+        )
 
         kw_pattern = '|'.join(cls.SECURITY_KEYWORDS)
         split_regex = rf',\s*(?=(?:{kw_pattern})\b)'
@@ -278,6 +294,16 @@ class AsumServices:
             'share_sp_panel_of_share_reas': 'max'
         })
 
+        # --- NORMALIZE ONLY QS SHARES PER PRIMARY KEY TO SUM TO 1.0 ---
+        qs_col = 'share_qs_panel_of_share_reas'
+        if qs_col in df_cleaned_treaty.columns:
+            sum_qs = df_cleaned_treaty.groupby('rumus_key')[qs_col].transform('sum')
+            df_cleaned_treaty[qs_col] = np.where(
+                sum_qs > 1.0,
+                df_cleaned_treaty[qs_col] / sum_qs,
+                df_cleaned_treaty[qs_col]
+            )
+
         known_rumus_keys = set(df_cleaned_treaty['rumus_key'].unique())
 
         merged_primary = pd.merge(
@@ -305,11 +331,8 @@ class AsumServices:
         unmatched_all['raw_rumus_key'] = np.nan
         unmatched_all['broker_used'] = np.nan
         unmatched_all['security_used'] = np.nan
-        # In _merge_with_treaty:
         unmatched_all['komisi_qs_per_panel'] = 0.0
         unmatched_all['komisi_sp_per_panel'] = 0.0
-
-        # Fill with 1.0 (or NaN) instead of 0.0 so multiplication preserves original QS/SPL
         unmatched_all['share_qs_panel_of_share_reas'] = 1.0
         unmatched_all['share_sp_panel_of_share_reas'] = 1.0
 
@@ -324,38 +347,34 @@ class AsumServices:
         df_claim = cls._read_file(main_file, required_terms=cls.REQUIRED_PREMI_GROUPS)
         df_treaty = cls._read_file(reference_file)
 
-        no_polis = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['POLICY_NO']).astype(str).str.strip()
-        no_reg = cls._get_column_value(df_claim, ['no_reg', 'registration_id', 'preliminary_id', 'claimno']).astype(str).str.strip()
-        insured_name = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['INSURED_NAME']).astype(str).str.strip()
-        cob_treaty = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['COB_TREATY']).astype(str).str.strip()
-        inception = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['INCEPTION']).astype(str).str.strip()
-        expiry = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['EXPIRY']).astype(str).str.strip()
-        dol_date = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['DOL_DATE']).astype(str).str.strip()
-        currency = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['CURRENCY']).astype(str).str.strip()
-        uy_final = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['UY_FINAL']).astype(str).str.strip()
+        no_polis = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_PREMI['POLICY_NO']).astype(str).str.strip().fillna('')
+        no_sertifikat = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_PREMI['CERTIFICATE_NO']).astype(str).str.strip().fillna('')
+        insured_name = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_PREMI['INSURED_NAME']).astype(str).str.strip().fillna('')
+        cob_treaty = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_PREMI['COB_TREATY']).astype(str).str.strip().fillna('')
+        inception = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_PREMI['INCEPTION']).astype(str).str.strip().fillna('')
+        expiry = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_PREMI['EXPIRY']).astype(str).str.strip().fillna('')
+        currency = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_PREMI['CURRENCY']).astype(str).str.strip().fillna('')
+        uy_final = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_PREMI['UY_FINAL']).astype(str).str.strip().fillna('')
         
-        claim_amount = cls._get_numeric_column(df_claim, cls.COLUMN_MAPPING_KLAIM['CLAIM_AMOUNT'])
-        quota_share = cls._get_numeric_column(df_claim, cls.COLUMN_MAPPING_KLAIM['QUOTA_SHARE'])
-        surplus = cls._get_numeric_column(df_claim, cls.COLUMN_MAPPING_KLAIM['SURPLUS'])
+        quota_share = cls._normalize_share_decimal(cls._get_numeric_column(df_claim, cls.COLUMN_MAPPING_PREMI['QUOTA_SHARE']))
+        surplus = cls._normalize_share_decimal(cls._get_numeric_column(df_claim, cls.COLUMN_MAPPING_PREMI['SURPLUS']))
 
         calculated_rumus, fallback_rumus = cls._extract_or_build_primary_key(df_claim)
 
         df_clean = pd.DataFrame({
             'POLICY NUMBER': no_polis,
-            'NOMOR REGISTER': no_reg,
-            'THE INSURED': insured_name,
+            'CERTIFICATE NO': no_sertifikat,
+            'INSURED NAME': insured_name,
             'COB': cob_treaty,
-            'UW YEAR': uy_final,
             'INCEPTION': inception,
             'EXPIRY': expiry,
-            'DOL': dol_date,
             'CURRENCY': currency,
-            'CLAIM AMOUNT': claim_amount,
+            'UW YEAR': uy_final,
             'QS': quota_share,
             'SPL': surplus,
             'calculated_rumus': calculated_rumus,
             'fallback_rumus': fallback_rumus,
-            '_orig_idx': np.arange(len(df_claim))
+            '._orig_idx': np.arange(len(df_claim))
         })
 
         df_joined = cls._merge_with_treaty(df_clean, df_treaty)
@@ -363,15 +382,17 @@ class AsumServices:
         qs_mult = df_joined['share_qs_panel_of_share_reas'].fillna(0.0)
         sp_mult = df_joined['share_sp_panel_of_share_reas'].fillna(0.0)
 
-        df_joined['multiplied_quota_share'] = df_joined['QS'] * qs_mult
-        df_joined['multiplied_surplus'] = df_joined['SPL'] * sp_mult
+        qs_share = df_joined['multiplied_quota_share'] = (df_joined['QS'] * qs_mult).round(6)
+        sp_share = df_joined['multiplied_surplus'] = (df_joined['SPL'] * sp_mult).round(6)
+
+        df_joined['multiplied_komisi_qs'] = (df_joined['komisi_qs_per_panel'] * qs_share).round(6)
+        df_joined['multiplied_komisi_sp'] = (df_joined['komisi_sp_per_panel'] * sp_share).round(6)
 
         output_cols = [
-            'POLICY NUMBER', 'NOMOR REGISTER', 'THE INSURED', 'COB', 'UW YEAR', 'INCEPTION', 
-            'EXPIRY', 'DOL', 'CURRENCY', 'CLAIM AMOUNT', 
-            'QS', 'SPL', 'broker_used', 'security_used', 
-            'share_qs_panel_of_share_reas', 'share_sp_panel_of_share_reas', 
-            'multiplied_quota_share', 'multiplied_surplus'
+            'POLICY NUMBER', 'CERTIFICATE NO', 'INSURED NAME', 'COB', 'UW YEAR', 'INCEPTION', 
+            'EXPIRY', 'CURRENCY', 'QS', 'SPL', 'broker_used', 'security_used', 'share_qs_panel_of_share_reas', 
+            'share_sp_panel_of_share_reas', 'komisi_qs_per_panel', 'komisi_sp_per_panel', 'multiplied_quota_share', 
+            'multiplied_surplus', 'multiplied_komisi_qs', 'multiplied_komisi_sp'
         ]
 
         return df_joined[output_cols].copy()
@@ -382,29 +403,27 @@ class AsumServices:
         df_claim = cls._read_file(main_file, required_terms=cls.REQUIRED_KLAIM_GROUPS)
         df_treaty = cls._read_file(reference_file)
 
-        # FIXED: Explicitly grab POLICY_NO and POLICYREF_NO separately
-        policy_no = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['POLICY_NO']).astype(str).str.strip()
-        policy_refno = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['POLICYREF_NO']).astype(str).str.strip()
-        
-        # Fallback policy_refno to policy_no if policy_refno is empty/missing
+        policy_no = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['POLICY_NO']).astype(str).str.strip().fillna('')
+        policy_refno = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['POLICYREF_NO']).astype(str).str.strip().fillna('')
         policy_refno = np.where((policy_refno == '') | (policy_refno == 'nan'), policy_no, policy_refno)
-        insured_name = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['INSURED_NAME']).astype(str).str.strip()
-        cob_treaty = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['COB_TREATY']).astype(str).str.strip()
-        inception = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['INCEPTION']).astype(str).str.strip()
-        expiry = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['EXPIRY']).astype(str).str.strip()
-        dol_date = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['DOL_DATE']).astype(str).str.strip()
-        currency = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['CURRENCY']).astype(str).str.strip()
-        uy_final = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['UY_FINAL']).astype(str).str.strip()
+
+        insured_name = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['INSURED_NAME']).astype(str).str.strip().fillna('')
+        cob_treaty = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['COB_TREATY']).astype(str).str.strip().fillna('')
+        inception = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['INCEPTION']).astype(str).str.strip().fillna('')
+        expiry = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['EXPIRY']).astype(str).str.strip().fillna('')
+        dol_date = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['DOL_DATE']).astype(str).str.strip().fillna('')
+        currency = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['CURRENCY']).astype(str).str.strip().fillna('')
+        uy_final = cls._get_column_value(df_claim, cls.COLUMN_MAPPING_KLAIM['UY_FINAL']).astype(str).str.strip().fillna('')
         
         claim_amount = cls._get_numeric_column(df_claim, cls.COLUMN_MAPPING_KLAIM['CLAIM_AMOUNT'])
-        quota_share = cls._get_numeric_column(df_claim, cls.COLUMN_MAPPING_KLAIM['QUOTA_SHARE'])
-        surplus = cls._get_numeric_column(df_claim, cls.COLUMN_MAPPING_KLAIM['SURPLUS'])
+        quota_share = cls._normalize_share_decimal(cls._get_numeric_column(df_claim, cls.COLUMN_MAPPING_KLAIM['QUOTA_SHARE']))
+        surplus = cls._normalize_share_decimal(cls._get_numeric_column(df_claim, cls.COLUMN_MAPPING_KLAIM['SURPLUS']))
 
         calculated_rumus, fallback_rumus = cls._extract_or_build_primary_key(df_claim)
 
         df_clean = pd.DataFrame({
             'POLICY NUMBER': policy_no,
-            'POLICYREF NUMBER': policy_refno,
+            'NOMOR REGISTRASI': policy_refno,
             'THE INSURED': insured_name,
             'COB': cob_treaty,
             'UW YEAR': uy_final,
@@ -425,19 +444,24 @@ class AsumServices:
         qs_mult = df_joined['share_qs_panel_of_share_reas'].fillna(0.0)
         sp_mult = df_joined['share_sp_panel_of_share_reas'].fillna(0.0)
 
-        df_joined['multiplied_quota_share'] = df_joined['QS'] * qs_mult
-        df_joined['multiplied_surplus'] = df_joined['SPL'] * sp_mult
+        df_joined['multiplied_quota_share'] = (df_joined['QS'] * qs_mult).round(6)
+        df_joined['multiplied_surplus'] = (df_joined['SPL'] * sp_mult).round(6)
+
+        # Allocate actual Claim Amount values according to QS and SPL breakdown
+        df_joined['claim_qs_amount'] = (df_joined['CLAIM AMOUNT'] * df_joined['multiplied_quota_share']).round(2)
+        df_joined['claim_sp_amount'] = (df_joined['CLAIM AMOUNT'] * df_joined['multiplied_surplus']).round(2)
 
         df_joined['qs share per panel'] = df_joined['share_qs_panel_of_share_reas']
         df_joined['sp share per panel'] = df_joined['share_sp_panel_of_share_reas']
 
         output_cols = [
-            'POLICY NUMBER', 'POLICYREF NUMBER', 'THE INSURED', 'COB', 'UW YEAR', 
+            'POLICY NUMBER', 'NOMOR REGISTRASI', 'THE INSURED', 'COB', 'UW YEAR', 
             'INCEPTION', 'EXPIRY', 'DOL', 'CURRENCY', 'CLAIM AMOUNT', 
             'QS', 'SPL', 'broker_used', 'security_used', 
             'qs share per panel', 'sp share per panel',
             'share_qs_panel_of_share_reas', 'share_sp_panel_of_share_reas', 
-            'multiplied_quota_share', 'multiplied_surplus'
+            'multiplied_quota_share', 'multiplied_surplus',
+            'claim_qs_amount', 'claim_sp_amount'
         ]
 
         return df_joined[output_cols].copy()

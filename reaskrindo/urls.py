@@ -22,4 +22,5 @@ urlpatterns = [
     path('asum/', include('asum.urls')),
     path('finance/', include('finance.urls')),
     path('kredit-program/', include('kredit_program.urls')),
+    path('auto-mapping/', include('auto_mapping.urls')),
 ]
