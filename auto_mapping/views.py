@@ -1,8 +1,10 @@
 import io
+import os
 import pandas as pd
-from django.http import HttpResponse, JsonResponse  # Added JsonResponse
+from django.http import FileResponse, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from django.conf import settings
 
 from services.auto_mapping_services import AutoMappingServices
 from .models import AutoMapping
@@ -13,11 +15,9 @@ def import_cob_uy(request):
     main_file = request.FILES.get('main_file')
     reference_file = request.FILES.get('reference_file', None)
     
-    # 1. Use request.GET for standard Django views instead of request.query_params
     file_format = request.GET.get('format', 'xlsx').lower()
 
     if not main_file:
-        # Use JsonResponse instead of DRF Response
         return JsonResponse({"error": "Please provide 'main_file'."}, status=400)
 
     try:
@@ -26,7 +26,6 @@ def import_cob_uy(request):
             reference_file=reference_file
         )
 
-        # Log to DB
         unmapped_count = int(processed_df['cob_treaty'].isna().sum())
         AutoMapping.objects.create(
             main_file_name=main_file.name,
@@ -35,7 +34,6 @@ def import_cob_uy(request):
             unmapped_cob_count=unmapped_count
         )
 
-        # 2. Dynamically build stream based on requested format
         output = io.BytesIO()
         base_filename = main_file.name.split('.')[0]
 
@@ -55,5 +53,32 @@ def import_cob_uy(request):
         return response
 
     except Exception as e:
-        # Use JsonResponse instead of DRF Response
         return JsonResponse({"error": str(e)}, status=400)
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def download_reference_file(request):
+    file_format = request.GET.get('format', 'xlsx').lower()
+
+    if file_format == 'csv':
+        filename = "mapping toc ke cob treaty.csv"
+        content_type = "text/csv"
+    else:
+        filename = "mapping toc ke cob treaty.xlsx"
+        content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        
+    file_path = os.path.join(settings.BASE_DIR, 'static', 'templates', filename)
+
+    if not os.path.exists(file_path):
+        return JsonResponse(
+            {"error": f"Template file '{filename}' tidak ditemukan di server backend."}, 
+            status=404
+        )
+    
+    try:
+        response = FileResponse(open(file_path, 'rb'), content_type=content_type)
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+    except Exception as e:
+        return JsonResponse({"error": f"Gagal membaca file: {str(e)}"}, status=500)
+    

@@ -1,10 +1,12 @@
 import io
 import json
+import os
 import pandas as pd
-from django.http import HttpResponse, JsonResponse
+from django.http import FileResponse, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.core.exceptions import ValidationError
+from django.conf import settings
 
 from services.asum_services import AsumServices
 from asum.models import Asum
@@ -103,3 +105,30 @@ def process_and_export_asum(request):
         traceback.print_exc()
         print("------------------------\n")
         return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def download_reference_file(request):
+    file_format = request.GET.get('format', 'xlsx').lower()
+
+    if file_format == 'csv':
+        filename = "QRY TRATY DAN MAIN CONTRACT TREATY - used database final 20052026 - SQL.csv"
+        content_type = "text/csv"
+    else: 
+        filename = "QRY TRATY DAN MAIN CONTRACT TREATY - used database final 20052026 - SQL.xlsx"
+        content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    file_path = os.path.join(settings.BASE_DIR, 'static', 'templates', filename)
+
+    if not os.path.exists(file_path):
+        return JsonResponse(
+            {"error": f"Template file '{filename} tidak ditemukan di server backend."},
+            status=404
+        )
+    
+    try:
+        response = FileResponse(open(file_path, 'rb'), content_type=content_type)
+        response['Conteny-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+    except Exception as e:
+        return JsonResponse({"error": f"Gagal membaca file: {str(e)}"}, status=500)
