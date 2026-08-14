@@ -22,7 +22,7 @@ class FinanceServices:
         ],
         'NO_KLAIM': ['no_klaim', 'no klaim', 'no. klaim', 'claim_no', 'claim no.', 'claimno'],
         'NAMA DEBITUR': ['insured_name', 'nama tertanggung', 'the insured', 'insured', 'nama_debitur', 'debitur', 'nm_debitur'],
-        'COB': ['cob_treaty', 'cob eng', 'cob', 'cob_group', 'class_of_business', 'kode', 'product_name', 'COB_treaty'],
+        'COB': ['cob_treaty', 'cob eng', 'cob', 'cob_group', 'class_of_business', 'kode', 'product_name', 'COB_treaty', 'product'],
         'PRODUCT_ID': ['product_id'],
         'TANGGAL_AWAL': ['inception', 'tgl_awal', 'tanggal_awal', 'start_date', 'period of ins. awal'],
         'TANGGAL_AKHIR': ['expiry', 'tgl_akhir', 'tanggal_akhir', 'end_date', 'period of ins. akhir'],
@@ -32,6 +32,10 @@ class FinanceServices:
         'CLAIM_AMOUNT': ['claim_amount', 'claim amount', 'claim_amount_idr', 'gross', 'amt_claim_set', 'gross os klaim', 'amt_outstanding', 'klaim_total (idr)', 'klaim (ori)', 'nil_klaim', 'nilai_klaim', 'total_claim'],
         'QUOTA_SHARE': ['quota_share', 'quota share', 'quota_share_set', 'qs', 'reas_qs', 'pct_qs', 'sor_qs', 'qs share', 'qs_share', 'klaim_qs'],
         'SURPLUS': ['surplus', 'surplus_set', 'sp', 'spl', 'reas_sp', 'pct_sp', 'sor_sp', 'sp share', 'sp_share', 'klaim_sp'],
+        'KUPERA': ['kupera'],
+        'TENOR': ['tenor', 'tenor_bulan', 'jangka_waktu'],
+        'CASHLOSS': ['cashloss', 'cash_loss', 'info3 CC', 'cc', 'cash_call', 'cashcall'],
+        'ND': ['nd', 'isnd', 'is_nd', 'info2 ND'],
         'KOMISI_QS': ['komisi_qs', 'qs_komisi'],
         'PREMI_QS': ['premi_qs', 'qs_premi'],
         'KLAIM_QS': ['klaim_qs', 'qs_klaim'],
@@ -61,7 +65,7 @@ class FinanceServices:
     FINAL_BLUEPRINT_COLUMNS = [
         'No. Sertifikat', 'No. Klaim', 'Nama Debitur', 'COB', 'Product ID', 
         'Tanggal Awal', 'Tanggal Akhir', 'DOL Date', 'Currency', 'UY Final', 
-        'Claim Amount', 'Quota Share', 'Surplus', 'Broker', 'Security', 
+        'Claim Amount', 'Quota Share', 'Surplus', 'Kupera', 'Long Term', 'Cashloss', 'ND', 'Broker', 'Security', 
         'QS Share', 'SP Share', 'QS Share Amt', 'SP Share Amt',
         'Komisi QS Panel', 'Premi QS Panel', 'Klaim QS Panel', 
         'Komisi SP Panel', 'Premi SP Panel', 'Klaim SP Panel', 
@@ -184,22 +188,13 @@ class FinanceServices:
 
     @classmethod
     def _extract_main_primary_key(cls, df: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.Series]:
-        """
-        Extracts structural keys from the main table dataset.
-        Returns:
-        1. calculated_key: full cleaned treaty scheme string (e.g., 'SB2023')
-        2. raw_key_normalized: stripped version of raw identifier (e.g., 'SB2023')
-        3. extracted_prefix_key: dynamic code prefix extracted to mix with modern UY (e.g., 'SB')
-        """
         raw_key = cls._get_column_value(df, cls.FINANCE_COLUMN_MAPPING['TREATY_SCHEME_ID']).astype(str).str.strip()
         calculated_key = cls._normalize_key_string(raw_key)
         raw_key_normalized = raw_key.str.upper().str.replace(r'[\s\-_/]+', '', regex=True).str.strip()
         
-        # Regex to match the trailing year pattern (e.g., extract 'SB' from 'SB-2023' or 'SB2023')
         extracted_prefix = raw_key.str.replace(r'\b(19|20)\d{2}\b|\d{2,4}$', '', regex=True)
         extracted_prefix_key = cls._normalize_key_string(extracted_prefix)
         
-        # If TREATY_SCHEME_ID was missing/nan, drop back to the main COB column value
         cob_fallback = cls._normalize_key_string(cls._get_column_value(df, cls.FINANCE_COLUMN_MAPPING['COB']))
         extracted_prefix_key = np.where(
             extracted_prefix_key.isin(['', 'NAN', 'NONE', 'NULL']), 
@@ -212,11 +207,10 @@ class FinanceServices:
 
     @classmethod
     def _build_reference_primary_key(cls, df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
-        """Creates the primary key for reference table by combining kode, '-', and uy."""
-        kode_series = cls._get_column_value(df, ['kode', 'cob', 'product']).astype(str).str.strip()
+        node_series = cls._get_column_value(df, ['kode', 'cob', 'product']).astype(str).str.strip()
         uy_series = cls._get_column_value(df, ['uy', 'uw', 'underwriting_year', 'tahun']).astype(str).str.strip()
         
-        combined = kode_series + '-' + uy_series
+        combined = node_series + '-' + uy_series
         calculated_key = cls._normalize_key_string(combined)
         raw_key_normalized = combined.str.upper().str.replace(r'[\s\-_/]+', '', regex=True).str.strip()
         return calculated_key, raw_key_normalized
@@ -273,9 +267,7 @@ class FinanceServices:
             df_distinct_treaty[col] = df_distinct_treaty[new_col]
 
         df_cleaned_treaty = df_distinct_treaty.drop(columns=['norm_share_qs', 'norm_share_sp'])
-        known_rumus_keys = set(df_cleaned_treaty['rumus_key'].unique())
 
-        # Strategy 1: Direct exact match (e.g. key + underwriting year match perfectly)
         merged_primary = pd.merge(
             df_main_clean, df_cleaned_treaty, 
             left_on=['calculated_rumus', 'uy_clean'], 
@@ -283,11 +275,9 @@ class FinanceServices:
             how='inner'
         )
         
-        # Strategy 2: Fallback to matching extracted prefix with actual modern UY (e.g., SB + 2026 -> SB2026)
         matched_orig_indices = set(merged_primary['_orig_idx'])
         unmatched_step1 = df_main_clean[~df_main_clean['_orig_idx'].isin(matched_orig_indices)].copy()
         
-        # Build dynamic target key from the isolated text prefix and current row year
         unmatched_step1['dynamic_target_key'] = unmatched_step1['prefix_rumus'] + unmatched_step1['uy_clean']
         
         merged_dynamic_prefix = pd.merge(
@@ -297,7 +287,6 @@ class FinanceServices:
             how='inner'
         ).drop(columns=['dynamic_target_key'])
 
-        # Strategy 3: Standard raw key structural fallback matching
         matched_orig_indices = matched_orig_indices.union(set(merged_dynamic_prefix['_orig_idx']))
         unmatched_step2 = df_main_clean[~df_main_clean['_orig_idx'].isin(matched_orig_indices)]
         
@@ -308,7 +297,6 @@ class FinanceServices:
             how='inner'
         )
 
-        # Strategy 4: Handle completely unmatched items safely without zeroing out global shares
         matched_orig_indices = matched_orig_indices.union(set(merged_fallback['_orig_idx']))
         unmatched_all = df_main_clean[~df_main_clean['_orig_idx'].isin(matched_orig_indices)].copy()
 
@@ -330,18 +318,45 @@ class FinanceServices:
         uy_raw = cls._get_column_value(df_source, cls.FINANCE_COLUMN_MAPPING['UY_FINAL']).astype(str).str.strip().fillna('')
         uy_clean_series = cls._normalize_key_string(uy_raw)
 
+        # 1. Fetch PRODUCT_ID and normalize string format (uppercase & stripped)
+        cob_series = (
+            cls._get_column_value(df_source, cls.FINANCE_COLUMN_MAPPING['COB'])
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
+        
+        # 2. Extract numeric tenor values
+        tenor_series = cls._get_numeric_column(df_source, cls.FINANCE_COLUMN_MAPPING['TENOR'])
+
+        # 3. Build conditional evaluation masks:
+        # Rule 1: PRODUCT_ID == 'KUS', tenor > 180, and uy == '2023'
+        # Rule 2: PRODUCT_ID == 'KUK', tenor > 60, and uy == '2023'
+        cond_kus_long = (cob_series == 'CONSUMPTIVE CREDIT') & (tenor_series > 180) & (uy_clean_series == '2023')
+        cond_kuk_long = (cob_series == 'PRODUCTIVE CREDIT') & (tenor_series > 60) & (uy_clean_series == '2023')
+
+        # 4. Vectorized assignment ('Long' if either condition is met, otherwise 'No')
+        long_term_computed = np.where(cond_kus_long | cond_kuk_long, 'Long', 'No')
+
+        # Helper lambda to treat NaN values as real empty strings instead of stringified versions like 'nan'
+        clean_str = lambda col_name: cls._get_column_value(df_source, cls.FINANCE_COLUMN_MAPPING[col_name]).astype(str).str.strip().replace(['nan', 'NaN', 'None', 'nat', 'NaT'], '')
+
         return pd.DataFrame({
-            'NO_SERTIFIKAT': cls._get_column_value(df_source, cls.FINANCE_COLUMN_MAPPING['NO_SERTIFIKAT']).astype(str).str.strip().fillna(''),
-            'NAMA DEBITUR': cls._get_column_value(df_source, cls.FINANCE_COLUMN_MAPPING['NAMA DEBITUR']).astype(str).str.strip().fillna(''),
-            'COB': cls._get_column_value(df_source, cls.FINANCE_COLUMN_MAPPING['COB']).astype(str).str.strip().fillna(''),
-            'PRODUCT_ID': cls._get_column_value(df_source, cls.FINANCE_COLUMN_MAPPING['PRODUCT_ID']).astype(str).str.strip().fillna(''),
-            'TANGGAL_AWAL': cls._get_column_value(df_source, cls.FINANCE_COLUMN_MAPPING['TANGGAL_AWAL']).astype(str).str.strip().fillna(''),
-            'TANGGAL_AKHIR': cls._get_column_value(df_source, cls.FINANCE_COLUMN_MAPPING['TANGGAL_AKHIR']).astype(str).str.strip().fillna(''),
-            'CURRENCY': cls._get_column_value(df_source, cls.FINANCE_COLUMN_MAPPING['CURRENCY']).astype(str).str.strip().fillna(''),
+            'NO_SERTIFIKAT': clean_str('NO_SERTIFIKAT'),
+            'NAMA DEBITUR': clean_str('NAMA DEBITUR'),
+            'COB': clean_str('COB'),
+            'PRODUCT_ID': clean_str('PRODUCT_ID'),
+            'TANGGAL_AWAL': clean_str('TANGGAL_AWAL'),
+            'TANGGAL_AKHIR': clean_str('TANGGAL_AKHIR'),
+            'CURRENCY': clean_str('CURRENCY'),
             'UW YEAR': uy_raw,
             'uy_clean': uy_clean_series,
             'QS': cls._normalize_share_decimal(cls._get_numeric_column(df_source, cls.FINANCE_COLUMN_MAPPING['QUOTA_SHARE'])),
             'SPL': cls._normalize_share_decimal(cls._get_numeric_column(df_source, cls.FINANCE_COLUMN_MAPPING['SURPLUS'])),
+            'KUPERA': clean_str('KUPERA'),
+            'LONG_TERM': long_term_computed,
+            'CASHLOSS': clean_str('CASHLOSS'),
+            'ND': clean_str('ND'),
             'premi_qs': cls._get_numeric_column(df_source, cls.FINANCE_COLUMN_MAPPING['PREMI_QS']),
             'klaim_qs': cls._get_numeric_column(df_source, cls.FINANCE_COLUMN_MAPPING['KLAIM_QS']),
             'komisi_qs': cls._get_numeric_column(df_source, cls.FINANCE_COLUMN_MAPPING['KOMISI_QS']),
@@ -371,6 +386,10 @@ class FinanceServices:
         df_out['Claim Amount'] = df['CLAIM_AMOUNT']
         df_out['Quota Share'] = df['QS']
         df_out['Surplus'] = df['SPL']
+        df_out['Kupera'] = df['KUPERA']
+        df_out['Long Term'] = df['LONG_TERM']
+        df_out['Cashloss'] = df['CASHLOSS']
+        df_out['ND'] = df['ND']
         df_out['Broker'] = df['broker_used']
         df_out['Security'] = df['security_used']
         
