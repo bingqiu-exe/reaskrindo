@@ -9,23 +9,30 @@ class AutoMappingServices:
     COLUMN_MAPPING = {
         'TANGGAL_AWAL': [
             'inception', 'tgl_awal', 'tanggal_awal', 'start_date', 
-            'period of ins. awal', 'tanggal awal', 'inception date'
+            'period of ins. awal', 'tanggal awal', 'inception date',
+            'eff_date', 'effective_date', 'tgl_efektif', 'uw_date', 'date'
         ],
         'TANGGAL_AKHIR': [
             'expiry', 'tgl_akhir', 'tanggal_akhir', 'end_date', 
             'period of ins. akhir', 'tanggal akhir', 'expiry date'
+        ],
+        'UY': [
+            'uy', 'underwriting_year', 'uw_year', 'uw year', 'uy_final', 'year', 'tahun'
         ],
         'COB': [
             'product', 'product_name', 'produk', 'nama_produk', 
             'cob', 'class_of_business', 'toc', 'type_of_cover', 
             'line_of_business', 'lob', 'nama produk'
         ],
+        'PRODUCT_ID': [
+            'product_id', 'id_product', 'kd_produk', 'kode_produk'
+        ],
         'COB_TREATY': [
             'cob_treaty', 'treaty_cob', 'cob reas', 'target_cob', 
-            'cob_group', 'group_cob', 'cob_final'
+            'cob_group', 'group_cob', 'cob_final', 'product_name'
         ]
     }
-
+    
     MAPPING_COB_KEYWORDS = [
         'WELCAR INSURANCE', 'Onshore Property', 'PSAGBI / Polis Standard Asuransi Gempa Bumi Indonesia', 
         'Offshore Property', 'Comprehensive Machinery Insurance', 'CECR / Civil Engineering Completed Risk', 
@@ -67,16 +74,12 @@ class AutoMappingServices:
         
         elif filename.endswith(('.xls', '.xlsx')):
             target_sheet = sheet_name if sheet_name is not None else 0
-            # 1. Baca data awal
             df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=target_sheet)
             
-            # 2. Jika kolom pertama berupa "Unnamed", cari baris yang berisi kata kunci mapping kita
             if df.columns[0].startswith('Unnamed:'):
                 for i, row in df.iterrows():
                     row_str = row.astype(str).str.lower().values
-                    # Cek apakah ada kata kunci 'inception' atau alias lainnya di baris ini
                     if any(any(alias in str(val) for alias in cls.COLUMN_MAPPING['TANGGAL_AWAL']) for val in row_str):
-                        # Set baris ini sebagai header baru
                         df.columns = df.iloc[i]
                         df = df.iloc[i+1:].reset_index(drop=True)
                         break
@@ -85,7 +88,6 @@ class AutoMappingServices:
     @classmethod
     def _find_column(cls, df: pd.DataFrame, possible_names: list) -> str:
         """Finds column matching alias exact clean name or substring."""
-        # Membersihkan karakter non-breaking space (\xa0) sebelum regex running
         normalized_cols = {
             re.sub(r'[\s_\-/]+', '', str(col).replace('\xa0', ' ')).strip().lower(): col 
             for col in df.columns
@@ -148,58 +150,119 @@ class AutoMappingServices:
             if matches.sum() > 3:
                 return col
 
-        raise ValidationError("Could not automatically detect Product or COB column.")
+        return None
+
+    @classmethod
+    def _detect_product_id_column(cls, df: pd.DataFrame) -> str:
+        """Detects PRODUCT_ID column (khusus data Finance)."""
+        return cls._find_column(df, cls.COLUMN_MAPPING['PRODUCT_ID'])
+
+    @classmethod
+    def _clean_code(cls, series: pd.Series) -> pd.Series:
+        """Helper to sanitize product codes by stripping embedded 4-digit years and whitespace."""
+        s = series.fillna("").astype(str).str.strip().str.lower()
+        s = s.replace('nan', '')
+        # Remove embedded 4-digit years (e.g., '2024kus' or 'kus2024' -> 'kus')
+        s = s.str.replace(r'\b(20\d{2})\b', '', regex=True)
+        s = s.str.replace(r'^(20\d{2})', '', regex=True)
+        s = s.str.replace(r'(20\d{2})$', '', regex=True)
+        return s.str.strip('_').str.strip()
 
     @classmethod
     def process_auto_mapping(cls, main_file, reference_file=None, reference_sheet=None) -> pd.DataFrame:
         df_main = cls._read_file(main_file)
 
-        # 1. Detect Inception Date and add 'uy_final'
+        # 1. Prioritaskan kalkulasi UY dari Tanggal Awal
         inception_col = cls._find_column(df_main, cls.COLUMN_MAPPING['TANGGAL_AWAL'])
-        if not inception_col:
-            raise ValidationError("Could not detect 'Inception' / 'Tanggal Awal' column in main dataset.")
+        existing_uy_col = cls._find_column(df_main, cls.COLUMN_MAPPING['UY'])
 
-        df_main['uy_final'] = cls.calculate_uy_final(df_main[inception_col])
+        if inception_col:
+            df_main['uy_final'] = cls.calculate_uy_final(df_main[inception_col])
+        elif existing_uy_col:
+            df_main['uy_final'] = df_main[existing_uy_col].fillna("").astype(str).str.strip()
+        else:
+            df_main['uy_final'] = ""
 
-        # 2. Detect Product / COB source column in main file
+        uy_col = 'uy_final'
+
+        # 2. Deteksi COB dan Product ID pada main dataset
         cob_col = cls._detect_cob_column(df_main)
+        product_id_col = cls._detect_product_id_column(df_main)
+        
+        is_financial = product_id_col is not None
 
         if 'cob_treaty' not in df_main.columns:
             df_main['cob_treaty'] = np.nan
 
-        # 3. Dynamic Multi-Column Reference Lookup
-        if reference_file is not None:
-            # reference_sheet is passed here via your dropdown value selection
-            df_ref = cls._read_file(reference_file, sheet_name=reference_sheet)
+        # 3. Jika Tanpa Reference File
+        if reference_file is None:
+            source_col = product_id_col if is_financial else cob_col
+            if source_col:
+                df_main['cob_treaty'] = df_main[source_col]
+            return df_main
 
-            # Identify which column to map FROM (Source key)
-            ref_source_col = cls._find_column(df_ref, cls.COLUMN_MAPPING['COB'])
-            if not ref_source_col:
-                ref_source_col = df_ref.columns[0] # Fallback to first column if aliases fail
+        # 4. Memproses Reference File
+        df_ref = cls._read_file(reference_file, sheet_name=reference_sheet)
 
-            # Identify which column to map TO (COB Treaty target)
-            ref_target_col = cls._find_column(df_ref, cls.COLUMN_MAPPING['COB_TREATY'])
+        ref_uy_col = cls._find_column(df_ref, cls.COLUMN_MAPPING['UY'])
+        ref_cob_col = cls._find_column(df_ref, cls.COLUMN_MAPPING['PRODUCT_ID']) or cls._find_column(df_ref, cls.COLUMN_MAPPING['COB'])
+        if not ref_cob_col:
+            ref_cob_col = df_ref.columns[0]
+
+        ref_target_col = cls._find_column(df_ref, cls.COLUMN_MAPPING['COB_TREATY'])
+        if not ref_target_col:
+            for col in df_ref.columns:
+                if col not in [ref_uy_col, ref_cob_col] and any(x in str(col).lower() for x in ['cob', 'treaty', 'group', 'product', 'nama']):
+                    ref_target_col = col
+                    break
             if not ref_target_col:
-                # Fallback: scan for any column that contains 'cob' or 'treaty' in name
-                for col in df_ref.columns:
-                    if col != ref_source_col and any(x in str(col).lower() for x in ['cob', 'treaty', 'group']):
-                        ref_target_col = col
-                        break
-            if not ref_target_col:
-                # Absolute fallback: use the second column if multiple columns exist
                 ref_target_col = df_ref.columns[1] if len(df_ref.columns) > 1 else df_ref.columns[0]
 
-            # Build sanitized mapping map (VLOOKUP mechanism)
-            df_ref['clean_key'] = df_ref[ref_source_col].astype(str).str.strip().str.lower()
+        # Mode Finansial: Multi-tier cascade lookup
+        if is_financial:
+            main_prod_series = df_main[product_id_col] if product_id_col else df_main[cob_col]
             
-            # Remove duplicate reference keys to avoid mapping corruption
+            raw_main_uy = df_main[uy_col].fillna("").astype(str).str.strip().str.lower()
+            raw_main_prod = main_prod_series.fillna("").astype(str).str.strip().str.lower()
+            clean_main_prod = cls._clean_code(main_prod_series)
+
+            # Build reference lookup tables
+            if ref_uy_col:
+                raw_ref_uy = df_ref[ref_uy_col].fillna("").astype(str).str.strip().str.lower()
+                raw_ref_prod = df_ref[ref_cob_col].fillna("").astype(str).str.strip().str.lower()
+                clean_ref_prod = cls._clean_code(df_ref[ref_cob_col])
+
+                # Tier 1: Exact UY + Raw Product ID
+                df_ref['key_tier1'] = raw_ref_uy + "_" + raw_ref_prod
+                map_tier1 = dict(zip(df_ref.drop_duplicates('key_tier1')['key_tier1'], df_ref.drop_duplicates('key_tier1')[ref_target_col]))
+
+                # Tier 2: Exact UY + Cleaned Product ID
+                df_ref['key_tier2'] = raw_ref_uy + "_" + clean_ref_prod
+                map_tier2 = dict(zip(df_ref.drop_duplicates('key_tier2')['key_tier2'], df_ref.drop_duplicates('key_tier2')[ref_target_col]))
+
+                # Execute Tier 1 & 2 Map
+                key_t1 = raw_main_uy + "_" + raw_main_prod
+                key_t2 = raw_main_uy + "_" + clean_main_prod
+                
+                df_main['cob_treaty'] = df_main['cob_treaty'].fillna(key_t1.map(map_tier1))
+                df_main['cob_treaty'] = df_main['cob_treaty'].fillna(key_t2.map(map_tier2))
+
+            # Tier 3: Product Code Fallback (Bypasses UY completely)
+            df_ref['key_prod_only'] = cls._clean_code(df_ref[ref_cob_col])
+            map_prod = dict(zip(df_ref.drop_duplicates('key_prod_only')['key_prod_only'], df_ref.drop_duplicates('key_prod_only')[ref_target_col]))
+            
+            df_main['cob_treaty'] = df_main['cob_treaty'].fillna(clean_main_prod.map(map_prod))
+            df_main['cob_treaty'] = df_main['cob_treaty'].fillna(raw_main_prod.map(map_prod))
+
+        else:
+            # Mode Non-Finansial / ASUM: Match purely on COB
+            df_ref['clean_key'] = df_ref[ref_cob_col].fillna("").astype(str).str.strip().str.lower()
+            main_key_source = df_main[cob_col] if cob_col else df_main.iloc[:, 0]
+            clean_main_key = main_key_source.fillna("").astype(str).str.strip().str.lower()
+
             df_ref_clean = df_ref.drop_duplicates(subset=['clean_key'], keep='first')
             mapping_dict = dict(zip(df_ref_clean['clean_key'], df_ref_clean[ref_target_col]))
 
-            # Execute mapping lookup
-            clean_main_cob = df_main[cob_col].astype(str).str.strip().str.lower()
-            mapped_values = clean_main_cob.map(mapping_dict)
-
-            df_main['cob_treaty'] = df_main['cob_treaty'].fillna(mapped_values)
+            df_main['cob_treaty'] = df_main['cob_treaty'].fillna(clean_main_key.map(mapping_dict))
 
         return df_main

@@ -35,7 +35,7 @@ class FinanceServices:
         'KUPERA': ['kupera'],
         'TENOR': ['tenor', 'tenor_bulan', 'jangka_waktu'],
         'CASHLOSS': ['cashloss', 'cash_loss', 'info3 CC', 'cc', 'cash_call', 'cashcall'],
-        'ND': ['nd', 'isnd', 'is_nd', 'info2 ND'],
+        'ND': ['nd', 'info2 ND'],
         'KOMISI_QS': ['komisi_qs', 'qs_komisi'],
         'PREMI_QS': ['premi_qs', 'qs_premi'],
         'KLAIM_QS': ['klaim_qs', 'qs_klaim'],
