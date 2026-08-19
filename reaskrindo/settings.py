@@ -43,7 +43,6 @@ INSTALLED_APPS = [
 
     'asum',
     'finance',
-    'kredit_program',
     'auto_mapping'
 ]
 
