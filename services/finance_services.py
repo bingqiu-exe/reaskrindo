@@ -228,8 +228,12 @@ class FinanceServices:
         komisi_qs = cls._normalize_share_decimal(cls._get_numeric_column(df_treaty, ['komisi_qs_per_panel', 'komisi_qs']))
         komisi_sp = cls._normalize_share_decimal(cls._get_numeric_column(df_treaty, ['komisi_sp_per_panel', 'komisi_sp']))
 
-        share_qs_panel = cls._get_numeric_column(df_treaty, ['share_qs_panel_of_share_reas', 'share_qs'])
-        share_sp_panel = cls._get_numeric_column(df_treaty, ['share_sp_panel_of_share_reas', 'share_sp'])
+        share_qs_panel = cls._normalize_share_decimal(
+            cls._get_numeric_column(df_treaty, ['share_qs_panel_of_share_reas', 'qs share per panel', 'share_qs_per_panel_of_100_pct', 'share_qs', 'broker_qs_share'])
+        )
+        share_sp_panel = cls._normalize_share_decimal(
+            cls._get_numeric_column(df_treaty, ['share_sp_panel_of_share_reas', 'sp share per panel', 'broker_sp_share', 'share_sp'])
+        )
 
         kw_pattern = '|'.join(cls.SECURITY_KEYWORDS)
         split_regex_str = rf',\s*(?=(?:{kw_pattern})\b)'
@@ -252,21 +256,10 @@ class FinanceServices:
         df_expanded['security_used'] = df_expanded['security_used'].str.strip().fillna('')
         df_expanded = df_expanded[(df_expanded['broker_used'] != '') | (df_expanded['security_used'] != '')]
 
-        df_distinct_treaty = df_expanded.drop_duplicates(
+        # Deduplicate strictly without artificial ratio scaling
+        df_cleaned_treaty = df_expanded.drop_duplicates(
             subset=['rumus_key', 'treaty_uy', 'broker_used', 'security_used']
         ).copy()
-
-        for col, new_col in [('share_qs_panel_of_share_reas', 'norm_share_qs'), 
-                             ('share_sp_panel_of_share_reas', 'norm_share_sp')]:
-            sum_shares = df_distinct_treaty.groupby(['rumus_key', 'treaty_uy'])[col].transform('sum')
-            df_distinct_treaty[new_col] = np.where(
-                sum_shares > 0, 
-                df_distinct_treaty[col] / sum_shares, 
-                df_distinct_treaty[col]
-            )
-            df_distinct_treaty[col] = df_distinct_treaty[new_col]
-
-        df_cleaned_treaty = df_distinct_treaty.drop(columns=['norm_share_qs', 'norm_share_sp'])
 
         merged_primary = pd.merge(
             df_main_clean, df_cleaned_treaty, 
@@ -318,7 +311,6 @@ class FinanceServices:
         uy_raw = cls._get_column_value(df_source, cls.FINANCE_COLUMN_MAPPING['UY_FINAL']).astype(str).str.strip().fillna('')
         uy_clean_series = cls._normalize_key_string(uy_raw)
 
-        # 1. Fetch PRODUCT_ID and normalize string format (uppercase & stripped)
         cob_series = (
             cls._get_column_value(df_source, cls.FINANCE_COLUMN_MAPPING['COB'])
             .astype(str)
@@ -326,19 +318,13 @@ class FinanceServices:
             .str.upper()
         )
         
-        # 2. Extract numeric tenor values
         tenor_series = cls._get_numeric_column(df_source, cls.FINANCE_COLUMN_MAPPING['TENOR'])
 
-        # 3. Build conditional evaluation masks:
-        # Rule 1: PRODUCT_ID == 'KUS', tenor > 180, and uy == '2023'
-        # Rule 2: PRODUCT_ID == 'KUK', tenor > 60, and uy == '2023'
         cond_kus_long = (cob_series == 'CONSUMPTIVE CREDIT') & (tenor_series > 180) & (uy_clean_series == '2023')
         cond_kuk_long = (cob_series == 'PRODUCTIVE CREDIT') & (tenor_series > 60) & (uy_clean_series == '2023')
 
-        # 4. Vectorized assignment ('Long' if either condition is met, otherwise 'No')
         long_term_computed = np.where(cond_kus_long | cond_kuk_long, 'Long', 'No')
 
-        # Helper lambda to treat NaN values as real empty strings instead of stringified versions like 'nan'
         clean_str = lambda col_name: cls._get_column_value(df_source, cls.FINANCE_COLUMN_MAPPING[col_name]).astype(str).str.strip().replace(['nan', 'NaN', 'None', 'nat', 'NaT'], '')
 
         return pd.DataFrame({
@@ -395,9 +381,12 @@ class FinanceServices:
         
         df_out['QS Share'] = qs_mult.round(6)
         df_out['SP Share'] = sp_mult.round(6)
-        df_out['QS Share Amt'] = (df['CLAIM_AMOUNT'] * df['QS'] * qs_mult).round(2)
-        df_out['SP Share Amt'] = (df['CLAIM_AMOUNT'] * df['SPL'] * sp_mult).round(2)
         
+        # Total share amounts derived directly from raw panel percentages
+        df_out['QS Share Amt'] = (df['QS'] * qs_mult).round(6)
+        df_out['SP Share Amt'] = (df['SPL'] * sp_mult).round(6)
+        
+        # Base premiums/claims/commissions scaled directly by panelist share
         df_out['Komisi QS Panel'] = (df['komisi_qs'] * qs_mult).round(2)
         df_out['Premi QS Panel'] = (df['premi_qs'] * qs_mult).round(2)
         df_out['Klaim QS Panel'] = (df['klaim_qs'] * qs_mult).round(2)

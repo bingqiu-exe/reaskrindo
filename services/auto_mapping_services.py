@@ -25,7 +25,10 @@ class AutoMappingServices:
             'line_of_business', 'lob', 'nama produk'
         ],
         'PRODUCT_ID': [
-            'product_id', 'id_product', 'kd_produk', 'kode_produk'
+            'product_id', 'id_product', 'kd_produk', 'kode_produk', 'kode', 'kd'
+        ],
+        'TREATY_SCHEME_ID': [
+            'treaty_scheme_id', 'primary_key', 'pk', 'key', 'kode_uy', 'pk_key'
         ],
         'COB_TREATY': [
             'cob_treaty', 'treaty_cob', 'cob reas', 'target_cob', 
@@ -154,22 +157,104 @@ class AutoMappingServices:
 
     @classmethod
     def _detect_product_id_column(cls, df: pd.DataFrame) -> str:
-        """Detects PRODUCT_ID column (khusus data Finance)."""
+        """Detects PRODUCT_ID column (khusus data Finance/Kode)."""
         return cls._find_column(df, cls.COLUMN_MAPPING['PRODUCT_ID'])
 
     @classmethod
     def _clean_code(cls, series: pd.Series) -> pd.Series:
         """Helper to sanitize product codes by stripping embedded 4-digit years and whitespace."""
-        s = series.fillna("").astype(str).str.strip().str.lower()
-        s = s.replace('nan', '')
-        # Remove embedded 4-digit years (e.g., '2024kus' or 'kus2024' -> 'kus')
+        s = series.fillna("").astype(str).str.strip().str.upper()
+        s = s.replace('NAN', '')
         s = s.str.replace(r'\b(20\d{2})\b', '', regex=True)
         s = s.str.replace(r'^(20\d{2})', '', regex=True)
         s = s.str.replace(r'(20\d{2})$', '', regex=True)
-        return s.str.strip('_').str.strip()
+        return s.str.strip('_').str.strip('-').str.strip()
 
     @classmethod
-    def process_auto_mapping(cls, main_file, reference_file=None, reference_sheet=None) -> pd.DataFrame:
+    def _generate_treaty_scheme_id(cls, df: pd.DataFrame) -> pd.Series:
+        """
+        Generates Treaty Scheme ID ({PRODUCT_ID or COB}-{UY}).
+        Prioritizes product_id (e.g. KUC) over COB (e.g. COMMERCIAL CREDIT).
+        """
+        # Pick product_id first, fallback to COB
+        prod_val = df['product_id'].fillna("") if 'product_id' in df.columns else pd.Series("", index=df.index)
+        
+        # If product_id is empty, try detecting COB
+        if prod_val.astype(str).str.strip().eq("").all():
+            cob_col = cls._detect_cob_column(df)
+            if cob_col:
+                prod_val = df[cob_col].fillna("")
+
+        prod_str = prod_val.astype(str).str.strip()
+        uy_str = df['uy_final'].fillna("").astype(str).str.strip() if 'uy_final' in df.columns else pd.Series("", index=df.index)
+
+        return np.where(
+            (prod_str != "") & (uy_str != ""),
+            prod_str + "-" + uy_str,
+            prod_str
+        )
+
+    @classmethod
+    def _apply_cascade_lookup(cls, df_main: pd.DataFrame, df_ref: pd.DataFrame, 
+                              main_source_col: str, ref_key_col: str, ref_val_col: str, 
+                              target_col_name: str, ref_uy_col: str = None, 
+                              ref_pk_col: str = None, use_primary_key: bool = True):
+        """
+        Multi-tier cascade lookup function:
+        1. Explicit/Constructed Treaty Scheme ID match ({CODE}-{UY})
+        2. Cleaned Treaty Scheme ID match ({CLEAN_CODE}-{UY})
+        3. Direct Code match (Fallback)
+        """
+        uy_col = 'uy_final'
+        
+        main_source_series = df_main[main_source_col]
+        raw_main_uy = df_main[uy_col].fillna("").astype(str).str.strip().str.upper()
+        raw_main_prod = main_source_series.fillna("").astype(str).str.strip().str.upper()
+        clean_main_prod = cls._clean_code(main_source_series)
+
+        if target_col_name not in df_main.columns:
+            df_main[target_col_name] = np.nan
+
+        # Prepare reference series
+        raw_ref_prod = df_ref[ref_key_col].fillna("").astype(str).str.strip().str.upper()
+        clean_ref_prod = cls._clean_code(df_ref[ref_key_col])
+        ref_values = df_ref[ref_val_col]
+
+        # --- Tier 1 & Tier 2: Treaty Scheme ID Matches ({CODE}-{UY}) ---
+        if use_primary_key:
+            pk_t1_series = None
+            pk_t2_series = None
+
+            if ref_pk_col and ref_pk_col in df_ref.columns:
+                pk_t1_series = df_ref[ref_pk_col].fillna("").astype(str).str.strip().str.upper()
+                pk_t2_series = cls._clean_code(df_ref[ref_pk_col]) + "-" + (
+                    df_ref[ref_uy_col].fillna("").astype(str).str.strip().str.upper()
+                    if ref_uy_col and ref_uy_col in df_ref.columns else ""
+                )
+            elif ref_uy_col and ref_uy_col in df_ref.columns:
+                raw_ref_uy = df_ref[ref_uy_col].fillna("").astype(str).str.strip().str.upper()
+                pk_t1_series = raw_ref_prod + "-" + raw_ref_uy
+                pk_t2_series = clean_ref_prod + "-" + raw_ref_uy
+
+            if pk_t1_series is not None and pk_t2_series is not None:
+                map_t1 = dict(zip(pk_t1_series, ref_values))
+                map_t2 = dict(zip(pk_t2_series, ref_values))
+
+                key_main_t1 = raw_main_prod + "-" + raw_main_uy
+                key_main_t2 = clean_main_prod + "-" + raw_main_uy
+
+                df_main[target_col_name] = df_main[target_col_name].fillna(key_main_t1.map(map_t1))
+                df_main[target_col_name] = df_main[target_col_name].fillna(key_main_t2.map(map_t2))
+
+        # --- Tier 3: Direct Code Match (Fallback) ---
+        map_clean_prod = dict(zip(clean_ref_prod, ref_values))
+        map_raw_prod = dict(zip(raw_ref_prod, ref_values))
+
+        df_main[target_col_name] = df_main[target_col_name].fillna(clean_main_prod.map(map_clean_prod))
+        df_main[target_col_name] = df_main[target_col_name].fillna(raw_main_prod.map(map_raw_prod))
+
+    @classmethod
+    def process_auto_mapping(cls, main_file, reference_file=None, reference_sheet=None, use_primary_key: bool = True) -> pd.DataFrame:
         df_main = cls._read_file(main_file)
 
         # 1. Prioritaskan kalkulasi UY dari Tanggal Awal
@@ -183,86 +268,83 @@ class AutoMappingServices:
         else:
             df_main['uy_final'] = ""
 
-        uy_col = 'uy_final'
-
         # 2. Deteksi COB dan Product ID pada main dataset
         cob_col = cls._detect_cob_column(df_main)
         product_id_col = cls._detect_product_id_column(df_main)
-        
         is_financial = product_id_col is not None
+
+        main_prod_source = product_id_col if is_financial else cob_col
+
+        # Pre-initialize columns
+        if 'product_id' not in df_main.columns:
+            df_main['product_id'] = df_main[product_id_col] if product_id_col else np.nan
 
         if 'cob_treaty' not in df_main.columns:
             df_main['cob_treaty'] = np.nan
 
+        # Initial Treaty Scheme ID build
+        df_main['treaty_scheme_id'] = cls._generate_treaty_scheme_id(df_main)
+
         # 3. Jika Tanpa Reference File
         if reference_file is None:
-            source_col = product_id_col if is_financial else cob_col
-            if source_col:
-                df_main['cob_treaty'] = df_main[source_col]
+            if main_prod_source:
+                df_main['cob_treaty'] = df_main[main_prod_source]
+            df_main.drop(columns=['primary_key'], errors='ignore', inplace=True)
             return df_main
 
         # 4. Memproses Reference File
         df_ref = cls._read_file(reference_file, sheet_name=reference_sheet)
 
         ref_uy_col = cls._find_column(df_ref, cls.COLUMN_MAPPING['UY'])
-        ref_cob_col = cls._find_column(df_ref, cls.COLUMN_MAPPING['PRODUCT_ID']) or cls._find_column(df_ref, cls.COLUMN_MAPPING['COB'])
-        if not ref_cob_col:
-            ref_cob_col = df_ref.columns[0]
+        ref_kode_col = cls._find_column(df_ref, cls.COLUMN_MAPPING['PRODUCT_ID'])
+        ref_pk_col = cls._find_column(df_ref, cls.COLUMN_MAPPING['TREATY_SCHEME_ID'])
+        ref_cob_col = cls._find_column(df_ref, cls.COLUMN_MAPPING['COB']) or ref_kode_col or df_ref.columns[0]
 
+        # Target COB Treaty column in reference file
         ref_target_col = cls._find_column(df_ref, cls.COLUMN_MAPPING['COB_TREATY'])
         if not ref_target_col:
             for col in df_ref.columns:
-                if col not in [ref_uy_col, ref_cob_col] and any(x in str(col).lower() for x in ['cob', 'treaty', 'group', 'product', 'nama']):
+                if col not in [ref_uy_col, ref_cob_col, ref_kode_col, ref_pk_col] and any(x in str(col).lower() for x in ['cob', 'treaty', 'group', 'product', 'nama']):
                     ref_target_col = col
                     break
             if not ref_target_col:
                 ref_target_col = df_ref.columns[1] if len(df_ref.columns) > 1 else df_ref.columns[0]
 
-        # Mode Finansial: Multi-tier cascade lookup
-        if is_financial:
-            main_prod_series = df_main[product_id_col] if product_id_col else df_main[cob_col]
-            
-            raw_main_uy = df_main[uy_col].fillna("").astype(str).str.strip().str.lower()
-            raw_main_prod = main_prod_series.fillna("").astype(str).str.strip().str.lower()
-            clean_main_prod = cls._clean_code(main_prod_series)
+        # 5. Lookup Logic Execution
+        ref_key_source = ref_kode_col if (is_financial and ref_kode_col) else ref_cob_col
 
-            # Build reference lookup tables
-            if ref_uy_col:
-                raw_ref_uy = df_ref[ref_uy_col].fillna("").astype(str).str.strip().str.lower()
-                raw_ref_prod = df_ref[ref_cob_col].fillna("").astype(str).str.strip().str.lower()
-                clean_ref_prod = cls._clean_code(df_ref[ref_cob_col])
+        if main_prod_source and ref_key_source:
+            # Step A: Populate/Update PRODUCT_ID using reference 'kode' if available
+            if ref_kode_col and ref_kode_col in df_ref.columns:
+                cls._apply_cascade_lookup(
+                    df_main=df_main,
+                    df_ref=df_ref,
+                    main_source_col=main_prod_source,
+                    ref_key_col=ref_key_source,
+                    ref_val_col=ref_kode_col,
+                    target_col_name='product_id',
+                    ref_uy_col=ref_uy_col,
+                    ref_pk_col=ref_pk_col,
+                    use_primary_key=use_primary_key
+                )
 
-                # Tier 1: Exact UY + Raw Product ID
-                df_ref['key_tier1'] = raw_ref_uy + "_" + raw_ref_prod
-                map_tier1 = dict(zip(df_ref.drop_duplicates('key_tier1')['key_tier1'], df_ref.drop_duplicates('key_tier1')[ref_target_col]))
+            # Step B: Populate COB_TREATY
+            cls._apply_cascade_lookup(
+                df_main=df_main,
+                df_ref=df_ref,
+                main_source_col=main_prod_source,
+                ref_key_col=ref_key_source,
+                ref_val_col=ref_target_col,
+                target_col_name='cob_treaty',
+                ref_uy_col=ref_uy_col,
+                ref_pk_col=ref_pk_col,
+                use_primary_key=use_primary_key
+            )
 
-                # Tier 2: Exact UY + Cleaned Product ID
-                df_ref['key_tier2'] = raw_ref_uy + "_" + clean_ref_prod
-                map_tier2 = dict(zip(df_ref.drop_duplicates('key_tier2')['key_tier2'], df_ref.drop_duplicates('key_tier2')[ref_target_col]))
+        # Re-generate treaty_scheme_id after lookup to ensure it uses mapped product_id (e.g. KUC-2013)
+        df_main['treaty_scheme_id'] = cls._generate_treaty_scheme_id(df_main)
 
-                # Execute Tier 1 & 2 Map
-                key_t1 = raw_main_uy + "_" + raw_main_prod
-                key_t2 = raw_main_uy + "_" + clean_main_prod
-                
-                df_main['cob_treaty'] = df_main['cob_treaty'].fillna(key_t1.map(map_tier1))
-                df_main['cob_treaty'] = df_main['cob_treaty'].fillna(key_t2.map(map_tier2))
-
-            # Tier 3: Product Code Fallback (Bypasses UY completely)
-            df_ref['key_prod_only'] = cls._clean_code(df_ref[ref_cob_col])
-            map_prod = dict(zip(df_ref.drop_duplicates('key_prod_only')['key_prod_only'], df_ref.drop_duplicates('key_prod_only')[ref_target_col]))
-            
-            df_main['cob_treaty'] = df_main['cob_treaty'].fillna(clean_main_prod.map(map_prod))
-            df_main['cob_treaty'] = df_main['cob_treaty'].fillna(raw_main_prod.map(map_prod))
-
-        else:
-            # Mode Non-Finansial / ASUM: Match purely on COB
-            df_ref['clean_key'] = df_ref[ref_cob_col].fillna("").astype(str).str.strip().str.lower()
-            main_key_source = df_main[cob_col] if cob_col else df_main.iloc[:, 0]
-            clean_main_key = main_key_source.fillna("").astype(str).str.strip().str.lower()
-
-            df_ref_clean = df_ref.drop_duplicates(subset=['clean_key'], keep='first')
-            mapping_dict = dict(zip(df_ref_clean['clean_key'], df_ref_clean[ref_target_col]))
-
-            df_main['cob_treaty'] = df_main['cob_treaty'].fillna(clean_main_key.map(mapping_dict))
+        # Clean up legacy primary_key column if it originated from input data
+        df_main.drop(columns=['primary_key'], errors='ignore', inplace=True)
 
         return df_main
