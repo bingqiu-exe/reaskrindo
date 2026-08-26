@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-6^&_@1kx(n^%^*oh()=qnf%jp&s4b@zczt@w*&(6!n9*gl*mv6
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost:8000', '127.0.0.1']
+ALLOWED_HOSTS = ['localhost:8000', '127.0.0.1', 'reaskrindo-six.vercel.app', '.vercel.app',]
 
 
 # Application definition
@@ -50,8 +50,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:8080",
     "http://127.0.0.1:8080",
     "http://localhost:5173",
-    "reaskrindo-six.vercel.app",
-    ".vercel.app",
+    "http://reaskrindo-six.vercel.app",
 ]
 
 MIDDLEWARE = [
