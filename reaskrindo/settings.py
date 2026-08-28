@@ -31,9 +31,10 @@ DEBUG = True
 ALLOWED_HOSTS = [
     'localhost',
     '127.0.0.1',
-    'reaskrindo-six.vercel.app',
+    # 'reaskrindo-six.vercel.app',
     '.vercel.app',
     '*',
+    '.onrender.com'
 ]
 
 # Application definition
@@ -58,8 +59,9 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:8080",
     "http://127.0.0.1:8080",
     "http://localhost:5173",
-    "http://reaskrindo-six.vercel.app",
-    "https://reaskrindo-fe.vercel.app"
+    # "http://reaskrindo-six.vercel.app",
+    "https://reaskrindo-fe.vercel.app",
+    "https://reaskrindo.onrender.com"
 ]
 
 MIDDLEWARE = [
@@ -98,6 +100,7 @@ CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = [
     "https://reaskrindo-fe.vercel.app",
     "https://*.vercel.app",
+    "https://*.onrender.com"
 ]
 
 # Database
