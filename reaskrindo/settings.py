@@ -56,7 +56,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8080",
     "http://localhost:5173",
     "http://reaskrindo-six.vercel.app",
-    "http://reaskrindo-fe.vercel.app",
+    "https://reaskrindo-fe.vercel.app"
 ]
 
 MIDDLEWARE = [
@@ -89,6 +89,13 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'reaskrindo.wsgi.application'
 
+CORS_ALLOW_CREDENTIALS = True
+
+# Add trusted origins for CSRF protection if POST requests are blocked
+CSRF_TRUSTED_ORIGINS = [
+    "https://reaskrindo-fe.vercel.app",
+    "https://*.vercel.app",
+]
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
