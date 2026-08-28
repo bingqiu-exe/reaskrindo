@@ -16,10 +16,10 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
-from django.shortcuts import redirect
+from django.http import JsonResponse
 
 urlpatterns = [
-    path('', lambda request: redirect('admin/', permanent=False)),
+    path('', lambda request: JsonResponse({"status": "active", "message": "Reaskrindo API is running"})),
     path('admin/', admin.site.urls),
     path('asum/', include('asum.urls')),
     path('finance/', include('finance.urls')),
